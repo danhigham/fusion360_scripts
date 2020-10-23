@@ -32,6 +32,11 @@ def run(context):
         moveFeats = rootComp.features.moveFeatures
         combines = rootComp.features.combineFeatures
 
+        occ = rootComp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        occ.component.name = "Sconce"
+
+        mainComp = occ.component
+
         # Load the leaf DXF
         importMgr = app.importManager
         dxfoptions = importMgr.createDXF2DImportOptions("C:\\Users\\dan\\Documents\\leaf.dxf", xzPlane)
@@ -56,19 +61,22 @@ def run(context):
         # Create horizontal supports
 
         support1center = adsk.core.Point3D.create(0, 0, MASTER_RADIUS/5)
-        support2center = adsk.core.Point3D.create(0, 0, MASTER_RADIUS)
+        support2center = adsk.core.Point3D.create(0, 0, MASTER_RADIUS/1.5)
 
         support1rad = math.sqrt(pow(MASTER_RADIUS, 2) - pow((MASTER_RADIUS-support1center.z), 2))
         support2rad = math.sqrt(pow(MASTER_RADIUS, 2) - pow((MASTER_RADIUS-support2center.z), 2))
 
-        bottomSupport = addHorizontalArc(rootComp, support1center, support1rad-5, support1rad)
-        topSupport = addHorizontalArc(rootComp, support2center, support2rad-4, support2rad)
+        bottomSupport = addHorizontalArc(mainComp, support1center, support1rad-5, support1rad)
+        topSupport = addHorizontalArc(mainComp, support2center, support2rad-4, support2rad)
+
+        bottomSupport.name = "bottom_support"
+        topSupport.name = "top_support"
 
         horizSupports = adsk.core.ObjectCollection.create()
-        horizSupports.add(bottomSupport.bodies[0])
-        horizSupports.add(topSupport.bodies[0])
+        horizSupports.add(bottomSupport.bRepBodies[0])
+        horizSupports.add(topSupport.bRepBodies[0])
 
-        # Create verticals
+        # Create vertical components
 
         verts = []
         outer_verts = adsk.core.ObjectCollection.create() 
@@ -76,16 +84,36 @@ def run(context):
 
         for i in range(9):
             bodies = addVerticalArc(rootComp, "vert_" + str(i))
-            outer_verts.add(bodies[0])
-            inner_verts.add(bodies[1])
-            rotateBodies(rootComp, bodies, adsk.core.Vector3D.create(0,1,0), adsk.core.Point3D.create(0,0,0), (i*20)+10)
 
-        combineInput = combines.createInput(topSupport.bodies[0], outer_verts)
+            transform = adsk.core.Matrix3D.create()
+            rotation = adsk.core.Matrix3D.create()
+            rotation.setToRotation(math.radians((i*20)+10), adsk.core.Vector3D.create(0,1,0), adsk.core.Point3D.create(0,0,0))
+            transform.transformBy(rotation)
+
+            occ = mainComp.occurrences.addNewComponent(transform)
+            occ.component.name =  "vert_" + str(i)
+            objects = adsk.core.ObjectCollection.create() 
+            
+            bodies[0].moveToComponent(occ)
+            bodies[1].moveToComponent(occ)
+
+            objects.add(occ.component.bRepBodies[0])
+            objects.add(occ.component.bRepBodies[1])
+
+            moveInput = occ.component.features.moveFeatures.createInput(objects, transform)
+            occ.component.features.moveFeatures.add(moveInput)
+
+            outer_verts.add(occ.component.bRepBodies[0])
+            inner_verts.add(occ.component.bRepBodies[1])
+
+        # combine outers and inner verts
+
+        combineInput = combines.createInput(topSupport.bRepBodies[0], outer_verts)
         combineInput.isKeepToolBodies = True
         combineInput.operation = adsk.fusion.FeatureOperations.CutFeatureOperation
         combines.add(combineInput)
 
-        combineInput = combines.createInput(bottomSupport.bodies[0], outer_verts)
+        combineInput = combines.createInput(bottomSupport.bRepBodies[0], outer_verts)
         combineInput.isKeepToolBodies = True
         combineInput.operation = adsk.fusion.FeatureOperations.CutFeatureOperation
         combines.add(combineInput)
@@ -119,7 +147,7 @@ def run(context):
 
         leafTilt = []
         leafScale = []
-
+        leafId = 0
         for i in range(9):
             if (i % 2) == 0:
                 leafPoints = evenPoints
@@ -142,20 +170,39 @@ def run(context):
                 addSlot(newLeaf)
 
                 feat = extrudes.addSimple(newLeaf.profiles[0], thickness, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+                feat.bodies[0].name = "leaf_" + str(leafId)
+                leafId = leafId + 1
+
+                transform = adsk.core.Matrix3D.create()
+
+                rotation0 = adsk.core.Matrix3D.create()
+                rotation0.setToRotation(math.radians(leafTilt[l]), adsk.core.Vector3D.create(0,0,1), adsk.core.Point3D.create(0,0,0))
+                transform.transformBy(rotation0)
+
+                move = adsk.core.Matrix3D.create()
+                move.translation = leafOrigin.vectorTo(pt)
+                transform.transformBy(move)
+                
                 bodyCollection = adsk.core.ObjectCollection.create()
                 bodyCollection.add(feat.bodies[0])
 
-                vector = leafOrigin.vectorTo(pt)
-                transform = adsk.core.Matrix3D.create()
-                transform.translation = vector
-
                 moveFeatureInput = moveFeats.createInput(bodyCollection, transform)
                 moveFeats.add(moveFeatureInput)
-
-                rotateBodies(rootComp, bodyCollection, adsk.core.Vector3D.create(0,0,1), pt, leafTilt[l])
-                rotateBodies(rootComp, bodyCollection, adsk.core.Vector3D.create(0,1,0), adsk.core.Point3D.create(0,0,0), (i*20)+10)
                 
-                leavesForVert.add(feat.bodies[0])  
+                rotation1 = adsk.core.Matrix3D.create()
+                rotation1.setToRotation(math.radians((i*20)+10), adsk.core.Vector3D.create(0,1,0), adsk.core.Point3D.create(0,0,0))
+                transform.transformBy(rotation1)
+
+                leafComp = mainComp.occurrences.addNewComponent(transform)
+                leafComp.component.name = feat.bodies[0].name
+                feat.bodies[0].moveToComponent(leafComp)
+
+                compCollection = adsk.core.ObjectCollection.create()
+                compCollection.add(leafComp.component.bRepBodies[0])
+
+                rotateBodies(leafComp.component, compCollection, adsk.core.Vector3D.create(0,1,0), adsk.core.Point3D.create(0,0,0), (i*20)+10)
+
+                leavesForVert.add(leafComp.component.bRepBodies[0])  
 
                 l = l + 1
             
@@ -169,6 +216,22 @@ def run(context):
     except:
         if ui:
             ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
+
+def createComponent(target, position, body):
+    transform = adsk.core.Matrix3D.create()
+    transform.translation = position
+
+    objects = adsk.core.ObjectCollection.create() 
+
+    occ = target.occurrences.addNewComponent(transform)
+    occ.component.name = body.name
+
+    body.moveToComponent(occ)
+    objects.add(occ.component.bRepBodies[0])
+    moveInput = occ.component.features.moveFeatures.createInput(objects, transform)
+    occ.component.features.moveFeatures.add(moveInput)
+
+    return occ.component
 
 def addSlot(sketch):
     backRight = adsk.core.Point3D.create(-1,-(THICKNESS/2),0)
@@ -349,12 +412,16 @@ def addHorizontalArc(rootComp, center, innerRad, outerRad):
 
     sketch = sketches.add(plane)
 
-    innerRadPoint = adsk.core.Point3D.create(innerRad, center.y, center.z)
-    outerRadPoint = adsk.core.Point3D.create(outerRad, center.y, center.z)
+    # innerRadPoint = adsk.core.Point3D.create(innerRad, center.y, center.z)
+    # outerRadPoint = adsk.core.Point3D.create(outerRad, center.y, center.z)
+
+    origin = adsk.core.Point3D.create(0, 0, 0)
+    innerRadPoint = adsk.core.Point3D.create(innerRad, 0, 0)
+    outerRadPoint = adsk.core.Point3D.create(outerRad, 0, 0)
 
     arcs = sketch.sketchCurves.sketchArcs
-    arc1 = arcs.addByCenterStartSweep(center, outerRadPoint, math.radians(180))
-    arc2 = arcs.addByCenterStartSweep(center, innerRadPoint, math.radians(180))
+    arc1 = arcs.addByCenterStartSweep(origin, outerRadPoint, math.radians(180))
+    arc2 = arcs.addByCenterStartSweep(origin, innerRadPoint, math.radians(180))
 
     lines = sketch.sketchCurves.sketchLines
     line1 = lines.addByTwoPoints(arc1.startSketchPoint, arc2.startSketchPoint)
@@ -362,7 +429,11 @@ def addHorizontalArc(rootComp, center, innerRad, outerRad):
 
     prof = sketch.profiles.item(sketch.profiles.count-1)
     thickness = adsk.core.ValueInput.createByReal(THICKNESS)
-    return extrudes.addSimple(prof, thickness, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    feature = extrudes.addSimple(prof, thickness, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+
+    positionalVector = adsk.core.Vector3D.create(center.x, center.z, center.y)
+
+    return createComponent(rootComp, positionalVector, feature.bodies[0])
 
 def CenterAndShowInWindowAllVisibleObjects(app :adsk.core.Application) -> bool:
     viewPort :adsk.core.Viewport = app.activeViewport
